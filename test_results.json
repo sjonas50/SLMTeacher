@@ -1,0 +1,22 @@
+{
+  "imports": {
+    "status": "passed",
+    "message": "All core imports successful"
+  },
+  "data_processing": {
+    "status": "passed",
+    "message": "Data processor initialized, 1 samples"
+  },
+  "config": {
+    "status": "passed",
+    "message": "Config initialized with teacher: microsoft/DialoGPT-medium"
+  },
+  "sample_data": {
+    "status": "passed",
+    "message": "Sample data validated, 2 problems"
+  },
+  "notebook_structure": {
+    "status": "passed",
+    "message": "Notebook has 22 cells (11 code, 11 markdown/raw)"
+  }
+}

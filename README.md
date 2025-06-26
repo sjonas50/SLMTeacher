@@ -7,12 +7,18 @@
 
 A state-of-the-art, production-ready implementation of [Sakana AI's RLT methodology](https://arxiv.org/abs/2412.15192) for training language models to generate effective teaching explanations. Features advanced optimizations including Flash Attention 2, QLoRA, and comprehensive production systems.
 
+📝 **Important Notes**: 
+- See [CORRECTION_SUMMARY.md](CORRECTION_SUMMARY.md) for architectural clarifications
+- See [TRAINING_OPTIONS_SUMMARY.md](TRAINING_OPTIONS_SUMMARY.md) for choosing the right training script
+
 ## ✨ Key Features
 
 ### 🎯 Core RLT Implementation
+- **Teacher-Student Architecture**: 
+  - Teacher (Claude Sonnet 4 via API): Generates high-quality explanations
+  - Student (Local HuggingFace model): Learns to solve problems using those explanations
 - **Dense Reward System**: rSS (solution score) - λ*rKL (KL divergence)  
-- **GRPO Algorithm**: Group Relative Policy Optimization for efficient training
-- **Teacher-Student Architecture**: Claude Sonnet 4 (API) as teacher, HuggingFace models as students
+- **GRPO Algorithm**: Trains student model to better understand teacher explanations
 
 ### ⚡ Advanced Optimizations
 - **Flash Attention 2**: 2-4x speed improvement, 50-70% memory reduction
@@ -39,6 +45,8 @@ A state-of-the-art, production-ready implementation of [Sakana AI's RLT methodol
 
 ## 🚀 Quick Start
 
+⚠️ **Important**: Please read [ARCHITECTURE.md](ARCHITECTURE.md) first to understand the teacher-student roles!
+
 ### Prerequisites
 ```bash
 # Python 3.8+ required
@@ -51,13 +59,16 @@ export CLAUDE_API_KEY="your-api-key-here"
 ### Option 1: Optimized Training (Recommended)
 ```bash
 # Create configuration
-python train_optimized_rlt.py --create-config
+python train_optimized_rlt_corrected.py --create-config
 
 # Run training with all optimizations
-python train_optimized_rlt.py
+python train_optimized_rlt_corrected.py
 
 # Or with custom student model
-python train_optimized_rlt.py --student-model "mistralai/Mistral-7B-Instruct-v0.3"
+python train_optimized_rlt_corrected.py --student-model "mistralai/Mistral-7B-Instruct-v0.3"
+
+# For highest quality (Claude as evaluator too):
+python train_optimized_rlt_claude_eval.py --eval-mode hybrid
 ```
 
 ### Option 2: Standard Training
@@ -102,9 +113,9 @@ SLMtest/
 │   │   └── cache_manager.py         # Intelligent caching
 │   └── utils/              # Utilities
 │       └── cost_tracker.py          # API cost management
-├── train_optimized_rlt.py   # Optimized training script
-├── train_rlt_model.py       # Standard training script
-└── notebooks/               # Interactive examples
+├── train_optimized_rlt_corrected.py  # Corrected optimized training script
+├── train_rlt_model.py                # Standard training script (local teacher)
+└── notebooks/                        # Interactive examples
 ```
 
 ## 🔧 Supported Models
@@ -162,10 +173,11 @@ python train_optimized_rlt.py \
 ## 💡 Key Concepts
 
 ### RLT Methodology
-- **Teacher Model**: Generates step-by-step explanations (Claude via API)
-- **Student Model**: Evaluates explanation quality (local HuggingFace model)
-- **Dense Rewards**: Combines solution correctness with KL divergence
-- **GRPO Training**: Optimizes for student understanding, not just accuracy
+- **Teacher Model**: Generates step-by-step explanations (Claude via API) - NOT trainable
+- **Student Model**: Learns to solve problems using teacher explanations (local HuggingFace model) - THIS gets trained
+- **Evaluator**: Assesses how well the student understands explanations (used for reward computation)
+- **Dense Rewards**: Combines solution correctness (rSS) with KL divergence
+- **GRPO Training**: Trains student to better understand and apply teacher explanations
 
 ### Why This Implementation?
 - **Production Ready**: Error handling, monitoring, cost controls
@@ -216,6 +228,10 @@ reward_fn = RewardFunction(
 
 ## 📚 Documentation
 
+- [Architecture Overview](ARCHITECTURE.md) - **IMPORTANT: Understand the teacher-student roles**
+- [Training Options Summary](TRAINING_OPTIONS_SUMMARY.md) - **Choose the right training script**
+- [Claude Evaluation Guide](CLAUDE_EVAL_GUIDE.md) - Using Claude as evaluator for highest quality
+- [Evaluator Options](EVALUATOR_OPTIONS.md) - Comparison of evaluation approaches
 - [Optimized Training Guide](OPTIMIZED_RLT_GUIDE.md) - Complete optimization details
 - [HF Model Training Guide](HF_MODEL_TRAINING_GUIDE.md) - Standard training guide
 - [Information.md](Information.md) - Detailed framework documentation

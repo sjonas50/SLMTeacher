@@ -72,20 +72,22 @@ export CLAUDE_API_KEY="your-api-key-here"
 
 ### 3. **Create Configuration**
 ```bash
-python train_optimized_rlt.py --create-config
+python train_optimized_rlt_corrected.py --create-config
 ```
 
 ### 4. **Run Training**
 ```bash
 # With default config
-python train_optimized_rlt.py
+python train_optimized_rlt_corrected.py
 
 # With custom config
-python train_optimized_rlt.py --config optimized_rlt_config_example.json
+python train_optimized_rlt_corrected.py --config optimized_rlt_config_example.json
 
 # Override student model
-python train_optimized_rlt.py --student-model "mistralai/Mistral-7B-Instruct-v0.3"
+python train_optimized_rlt_corrected.py --student-model "mistralai/Mistral-7B-Instruct-v0.3"
 ```
+
+**Note**: Use `train_optimized_rlt_corrected.py` which properly trains the student model to learn from teacher explanations.
 
 ## 🎯 Recommended Configurations
 

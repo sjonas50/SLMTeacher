@@ -61,6 +61,17 @@ from .reward_utils import (
     RewardDebugger
 )
 
+# Claude evaluator (optional)
+try:
+    from .claude_evaluator import (
+        ClaudeStudentEvaluator,
+        ClaudeEvaluatorConfig,
+        HybridEvaluator
+    )
+    _claude_available = True
+except ImportError:
+    _claude_available = False
+
 __all__ = [
     # Reward functions
     "RLTRewardFunction",
@@ -87,6 +98,14 @@ __all__ = [
     "RewardLogger",
     "RewardDebugger"
 ]
+
+# Add Claude evaluator if available
+if _claude_available:
+    __all__.extend([
+        "ClaudeStudentEvaluator",
+        "ClaudeEvaluatorConfig",
+        "HybridEvaluator"
+    ])
 
 # Version info
 __version__ = "0.1.0"

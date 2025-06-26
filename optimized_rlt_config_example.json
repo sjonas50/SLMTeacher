@@ -8,7 +8,7 @@
     "budget_limit": 50.0,
     "cache_size": 10000,
     "cache_ttl_hours": 168,
-    "comment": "Claude Sonnet 4 as teacher via API"
+    "comment": "Teacher: Generates explanations via API (not trainable)"
   },
   "student": {
     "model_name": "meta-llama/Llama-3.2-3B-Instruct",
@@ -24,11 +24,12 @@
     "adalora_target_r": 32,
     "gradient_checkpointing": true,
     "mixed_precision": "bf16",
-    "comment": "Optimized HuggingFace student with all improvements"
+    "comment": "Student: Learns from teacher explanations (this is what we train!)"
   },
   "evaluation": {
     "model_name": "meta-llama/Llama-3.2-3B-Instruct",
-    "batch_size": 8
+    "batch_size": 8,
+    "comment": "Evaluator: Measures student understanding for computing rewards"
   },
   "training": {
     "learning_rate": 2e-5,

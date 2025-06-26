@@ -163,8 +163,8 @@ runs/
 secrets.json
 
 # Large model files
-models/
-model_cache/
+/models/
+/model_cache/
 
 # Temporary files
 tmp/

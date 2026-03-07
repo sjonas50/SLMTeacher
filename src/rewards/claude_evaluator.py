@@ -15,7 +15,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
 from anthropic import Anthropic
-from ..teachers.claude_teacher import ClaudeConfig, RateLimiter
+from ..teachers.claude_teacher import ClaudeConfig, RateLimiter, RateLimitConfig
 from ..utils.cost_tracker import CostTracker
 
 
@@ -68,8 +68,7 @@ class ClaudeStudentEvaluator:
         
         # Rate limiter (shared with teacher if needed)
         self.rate_limiter = RateLimiter(
-            requests_per_minute=50,
-            tokens_per_minute=100000
+            RateLimitConfig(requests_per_minute=50, tokens_per_minute=100000)
         )
         
         # Evaluation prompt template

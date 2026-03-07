@@ -1,6 +1,6 @@
 """Tests for CostTracker."""
 import pytest
-from src.utils.cost_tracker import CostTracker
+from src.utils.cost_tracker import CostTracker, MODEL_PRICING, DEFAULT_PRICING
 
 
 class TestCostTracker:
@@ -68,3 +68,44 @@ class TestCostTracker:
             metadata={'model': 'test-model'}
         )
         assert tracker.costs['history'][0]['metadata']['model'] == 'test-model'
+
+    def test_per_model_pricing_opus(self):
+        tracker = CostTracker(budget_limit=100.0)
+        # Opus: $15/M input, $75/M output
+        tracker.add_usage(
+            input_tokens=1_000_000,
+            output_tokens=0,
+            metadata={'model': 'claude-3-opus-20240229'}
+        )
+        assert tracker.get_summary()['total_cost'] == pytest.approx(15.0, abs=0.01)
+
+    def test_per_model_pricing_haiku(self):
+        tracker = CostTracker(budget_limit=100.0)
+        # Haiku 3: $0.25/M input
+        tracker.add_usage(
+            input_tokens=1_000_000,
+            output_tokens=0,
+            metadata={'model': 'claude-3-haiku-20240307'}
+        )
+        assert tracker.get_summary()['total_cost'] == pytest.approx(0.25, abs=0.01)
+
+    def test_unknown_model_uses_default_pricing(self):
+        tracker = CostTracker(budget_limit=100.0)
+        tracker.add_usage(
+            input_tokens=1_000_000,
+            output_tokens=0,
+            metadata={'model': 'some-future-model'}
+        )
+        expected = DEFAULT_PRICING['input']
+        assert tracker.get_summary()['total_cost'] == pytest.approx(expected, abs=0.01)
+
+    def test_no_model_uses_default_pricing(self):
+        tracker = CostTracker(budget_limit=100.0)
+        tracker.add_usage(input_tokens=1_000_000, output_tokens=0)
+        expected = DEFAULT_PRICING['input']
+        assert tracker.get_summary()['total_cost'] == pytest.approx(expected, abs=0.01)
+
+    def test_model_pricing_table_has_expected_models(self):
+        assert 'claude-sonnet-4-6-20250514' in MODEL_PRICING
+        assert 'claude-3-opus-20240229' in MODEL_PRICING
+        assert 'claude-3-haiku-20240307' in MODEL_PRICING

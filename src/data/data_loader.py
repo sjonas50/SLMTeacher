@@ -138,18 +138,28 @@ class DataLoader:
         return data
     
     def _download_file(self, url: str, destination: Path, chunk_size: int = 8192):
-        """Download a file with progress bar."""
-        response = requests.get(url, stream=True)
-        total_size = int(response.headers.get('content-length', 0))
-        
+        """Download a file with progress bar, timeout, and retry."""
         destination.parent.mkdir(parents=True, exist_ok=True)
-        
-        with open(destination, 'wb') as f:
-            with tqdm(total=total_size, unit='B', unit_scale=True, desc=destination.name) as pbar:
-                for chunk in response.iter_content(chunk_size=chunk_size):
-                    if chunk:
-                        f.write(chunk)
-                        pbar.update(len(chunk))
+
+        for attempt in range(3):
+            try:
+                response = requests.get(url, stream=True, timeout=60)
+                response.raise_for_status()
+                total_size = int(response.headers.get('content-length', 0))
+
+                with open(destination, 'wb') as f:
+                    with tqdm(total=total_size, unit='B', unit_scale=True, desc=destination.name) as pbar:
+                        for chunk in response.iter_content(chunk_size=chunk_size):
+                            if chunk:
+                                f.write(chunk)
+                                pbar.update(len(chunk))
+                return  # success
+            except requests.RequestException as e:
+                logger.warning("Download attempt %d/3 failed for %s: %s", attempt + 1, url, e)
+                if attempt == 2:
+                    raise
+                import time as _time
+                _time.sleep(2 ** attempt)
     
     def _ensure_dataset_downloaded(self, dataset_name: str) -> Path:
         """Ensure a dataset is downloaded and return its path."""
@@ -270,7 +280,7 @@ class DataLoader:
                     try:
                         ds = load_dataset('hendrycks/competition_math', sub, split=split)
                         all_data.extend(list(ds))
-                    except:
+                    except Exception:
                         logger.warning(f"Failed to load MATH subset: {sub}")
                 
                 dataset = all_data

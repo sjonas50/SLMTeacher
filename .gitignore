@@ -182,6 +182,12 @@ memory/archive/
 # Cost tracking
 cost_reports/
 usage_logs/
+api_usage_log.json
+
+# Training output directories
+rlt_output/
+claude_eval_rlt_output/
+optimized_rlt_output/
 
 # Test outputs
 test_results/

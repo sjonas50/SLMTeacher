@@ -371,7 +371,7 @@ Solution:"""
                     new_value = str(int(variation))
                 
                 new_question = new_question.replace(num, new_value, 1)
-            except:
+            except (ValueError, IndexError, ArithmeticError):
                 continue
         
         # Note: Solution would need to be recalculated in practice

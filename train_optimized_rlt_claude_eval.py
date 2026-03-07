@@ -25,7 +25,7 @@ from src.models.optimized_model import OptimizedHFModel, OptimizedModelConfig
 from src.rewards.reward_function import RewardFunction
 from src.rewards.claude_evaluator import ClaudeStudentEvaluator, ClaudeEvaluatorConfig, HybridEvaluator
 from src.rewards.student_evaluator import StudentEvaluator
-from src.training.grpo_trainer_corrected import GRPOTrainer, GRPOConfig
+from src.training.grpo_trainer import GRPOTrainer, GRPOConfig
 from src.data.data_processor import DataProcessor
 from src.utils.cost_tracker import CostTracker
 
@@ -78,7 +78,7 @@ class OptimizedRLTTrainerWithClaudeEval:
         
         # Teacher configuration
         claude_config = ClaudeConfig(
-            model=self.config['teacher'].get('model', 'claude-3-5-sonnet-20241022'),
+            model=self.config['teacher'].get('model', 'claude-sonnet-4-6-20250514'),
             temperature=self.config['teacher'].get('temperature', 0.7),
             max_tokens=self.config['teacher'].get('max_tokens', 1024)
         )
@@ -128,7 +128,7 @@ class OptimizedRLTTrainerWithClaudeEval:
         if eval_mode == 'claude':
             # Pure Claude evaluation
             eval_config = ClaudeEvaluatorConfig(
-                model=self.config['evaluation'].get('model', 'claude-3-5-sonnet-20241022'),
+                model=self.config['evaluation'].get('model', 'claude-sonnet-4-6-20250514'),
                 temperature=self.config['evaluation'].get('temperature', 0.1),
                 max_tokens=self.config['evaluation'].get('max_tokens', 512)
             )
@@ -145,7 +145,7 @@ class OptimizedRLTTrainerWithClaudeEval:
             # Hybrid evaluation (Claude + local)
             # Claude evaluator
             eval_config = ClaudeEvaluatorConfig(
-                model=self.config['evaluation'].get('model', 'claude-3-5-sonnet-20241022'),
+                model=self.config['evaluation'].get('model', 'claude-sonnet-4-6-20250514'),
                 temperature=self.config['evaluation'].get('temperature', 0.1)
             )
             
@@ -360,7 +360,7 @@ def create_default_config() -> Dict:
         "seed": 42,
         "budget_limit": 100.0,
         "teacher": {
-            "model": "claude-3-5-sonnet-20241022",
+            "model": "claude-sonnet-4-6-20250514",
             "temperature": 0.7,
             "max_tokens": 1024,
             "cache_size": 10000,
@@ -382,7 +382,7 @@ def create_default_config() -> Dict:
         },
         "evaluation": {
             "mode": "hybrid",  # "claude", "local", or "hybrid"
-            "model": "claude-3-5-sonnet-20241022",
+            "model": "claude-sonnet-4-6-20250514",
             "temperature": 0.1,
             "max_tokens": 512,
             "claude_frequency": 0.2,  # Use Claude 20% of time in hybrid mode

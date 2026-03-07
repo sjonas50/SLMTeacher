@@ -61,16 +61,16 @@ class CostTracker:
             self.save_log()
     
     def get_summary(self) -> Dict:
-        """Get cost summary."""
+        """Get cost summary with numeric values."""
         runtime = time.time() - self.costs['start_time']
         return {
-            'total_cost': f"${self.costs['total_cost']:.4f}",
-            'budget_remaining': f"${self.budget_limit - self.costs['total_cost']:.4f}",
+            'total_cost': round(self.costs['total_cost'], 4),
+            'budget_remaining': round(self.budget_limit - self.costs['total_cost'], 4),
             'api_calls': self.costs['api_calls'],
             'total_tokens': self.costs['input_tokens'] + self.costs['output_tokens'],
-            'average_cost_per_call': f"${self.costs['total_cost'] / max(1, self.costs['api_calls']):.4f}",
-            'runtime_minutes': f"{runtime / 60:.1f}",
-            'calls_per_minute': f"{self.costs['api_calls'] / max(1, runtime / 60):.2f}"
+            'average_cost_per_call': round(self.costs['total_cost'] / max(1, self.costs['api_calls']), 4),
+            'runtime_minutes': round(runtime / 60, 1),
+            'calls_per_minute': round(self.costs['api_calls'] / max(1, runtime / 60), 2)
         }
     
     def save_log(self):

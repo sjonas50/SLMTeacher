@@ -19,7 +19,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from enum import Enum
 
-import anthropic
 from anthropic import Anthropic, APIError, APIConnectionError, APITimeoutError
 import numpy as np
 
@@ -61,7 +60,7 @@ class CacheConfig:
 @dataclass
 class ClaudeConfig:
     """Configuration for Claude API and teacher behavior."""
-    model: str = "claude-3-5-sonnet-20241022"
+    model: str = "claude-sonnet-4-6-20250514"
     temperature: float = 0.7
     max_tokens: int = 1024
     api_timeout: int = 30
@@ -631,7 +630,7 @@ def create_teacher_from_env() -> ClaudeRLTTeacher:
     
     Environment variables:
         - CLAUDE_API_KEY: API key (required)
-        - CLAUDE_MODEL: Model to use (default: claude-3-5-sonnet-20241022)
+        - CLAUDE_MODEL: Model to use (default: claude-sonnet-4-6-20250514)
         - CLAUDE_BUDGET_LIMIT: Budget limit in USD (default: 10.0)
         - CLAUDE_CACHE_ENABLED: Enable caching (default: true)
     
@@ -640,7 +639,7 @@ def create_teacher_from_env() -> ClaudeRLTTeacher:
     """
     # Read environment variables
     api_key = os.getenv("CLAUDE_API_KEY")
-    model = os.getenv("CLAUDE_MODEL", "claude-3-5-sonnet-20241022")
+    model = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6-20250514")
     budget_limit = float(os.getenv("CLAUDE_BUDGET_LIMIT", "10.0"))
     cache_enabled = os.getenv("CLAUDE_CACHE_ENABLED", "true").lower() == "true"
     

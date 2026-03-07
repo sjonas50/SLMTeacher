@@ -30,7 +30,7 @@ class TestClaudeConfig:
     
     def test_default_values(self):
         config = ClaudeConfig()
-        assert config.model == "claude-3-5-sonnet-20241022"
+        assert config.model == "claude-sonnet-4-6-20250514"
         assert config.temperature == 0.7
         assert config.max_tokens == 1024
         assert config.api_timeout == 30

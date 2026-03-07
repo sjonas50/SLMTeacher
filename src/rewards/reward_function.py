@@ -192,6 +192,70 @@ class RLTRewardFunction:
         """Update the lambda parameter for KL trade-off."""
         self.config.lambda_kl = new_lambda
         self.logger.info(f"Updated lambda to: {new_lambda}")
+
+
+class RewardFunction:
+    """
+    Simplified reward function matching the training script API.
+
+    Wraps student evaluation into a compute_reward method that returns
+    {'rewards': [...]} as expected by GRPOTrainer.
+    """
+
+    def __init__(
+        self,
+        student_evaluator=None,
+        kl_weight: float = 0.1,
+        correctness_weight: float = 0.5,
+        confidence_weight: float = 0.3,
+        length_penalty_weight: float = 0.1,
+    ):
+        self.student_evaluator = student_evaluator
+        self.kl_weight = kl_weight
+        self.correctness_weight = correctness_weight
+        self.confidence_weight = confidence_weight
+        self.length_penalty_weight = length_penalty_weight
+        self.logger = logging.getLogger(__name__)
+
+    def compute_reward(
+        self,
+        explanations: List[str],
+        questions: List[str],
+    ) -> Dict[str, List[float]]:
+        """
+        Compute rewards for a batch of explanations.
+
+        Returns:
+            Dict with 'rewards' key containing list of float scores.
+        """
+        if self.student_evaluator is not None:
+            try:
+                scores = self.student_evaluator.evaluate_batch(
+                    reasoning=explanations,
+                    problems=questions,
+                )
+                length_penalties = np.array([
+                    -self.length_penalty_weight * max(0, len(e) / 1000 - 1)
+                    for e in explanations
+                ])
+                rewards = self.correctness_weight * scores + length_penalties
+                return {'rewards': rewards.tolist()}
+            except Exception as e:
+                self.logger.warning(f"Evaluator failed, using heuristic rewards: {e}")
+
+        # Heuristic fallback when no evaluator or evaluator fails
+        rewards = []
+        for explanation in explanations:
+            score = 0.0
+            steps = explanation.count("Step") + explanation.count("step")
+            score += min(steps * 0.1, 0.5)
+            word_count = len(explanation.split())
+            if 50 <= word_count <= 500:
+                score += 0.3
+            if word_count < 20 or word_count > 1000:
+                score -= 0.2
+            rewards.append(score)
+        return {'rewards': rewards}
     
     def get_reward_statistics(
         self,

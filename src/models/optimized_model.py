@@ -20,7 +20,6 @@ from peft import (
 from typing import List, Dict, Optional, Tuple, Union
 import numpy as np
 import psutil
-import GPUtil
 from dataclasses import dataclass
 import gc
 import warnings
@@ -72,7 +71,7 @@ class OptimizedModelConfig:
 
 class MemoryMonitor:
     """Monitor and manage GPU/CPU memory usage."""
-    
+
     @staticmethod
     def get_memory_stats() -> Dict:
         """Get current memory statistics."""
@@ -81,14 +80,21 @@ class MemoryMonitor:
             'cpu_memory_percent': psutil.virtual_memory().percent,
             'cpu_available_gb': psutil.virtual_memory().available / (1024**3)
         }
-        
+
         if torch.cuda.is_available():
-            gpus = GPUtil.getGPUs()
-            for i, gpu in enumerate(gpus):
-                stats[f'gpu_{i}_memory_percent'] = gpu.memoryUtil * 100
-                stats[f'gpu_{i}_memory_free_gb'] = gpu.memoryFree / 1024
-                stats[f'gpu_{i}_memory_used_gb'] = gpu.memoryUsed / 1024
-        
+            for i in range(torch.cuda.device_count()):
+                mem_allocated = torch.cuda.memory_allocated(i) / (1024**3)
+                mem_reserved = torch.cuda.memory_reserved(i) / (1024**3)
+                mem_total = torch.cuda.get_device_properties(i).total_mem / (1024**3)
+                mem_free = mem_total - mem_allocated
+                stats[f'gpu_{i}_memory_used_gb'] = round(mem_allocated, 2)
+                stats[f'gpu_{i}_memory_reserved_gb'] = round(mem_reserved, 2)
+                stats[f'gpu_{i}_memory_free_gb'] = round(mem_free, 2)
+                stats[f'gpu_{i}_memory_percent'] = round((mem_allocated / mem_total) * 100, 1) if mem_total > 0 else 0
+        elif torch.backends.mps.is_available():
+            mem_allocated = torch.mps.current_allocated_memory() / (1024**3)
+            stats['mps_memory_used_gb'] = round(mem_allocated, 2)
+
         return stats
     
     @staticmethod
@@ -132,7 +138,12 @@ class OptimizedHFModel:
     
     def __init__(self, config: OptimizedModelConfig):
         self.config = config
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        if torch.cuda.is_available():
+            self.device = torch.device("cuda")
+        elif torch.backends.mps.is_available():
+            self.device = torch.device("mps")
+        else:
+            self.device = torch.device("cpu")
         
         # Check memory before loading
         self.memory_monitor = MemoryMonitor()
@@ -174,22 +185,24 @@ class OptimizedHFModel:
                 bnb_8bit_compute_dtype=torch.float16
             )
         
+        # use_cache must be False when gradient checkpointing is enabled
+        use_cache = self.config.use_cache and not self.config.gradient_checkpointing
+
         # Model loading kwargs
         model_kwargs = {
             "quantization_config": quantization_config,
             "device_map": self.config.device_map,
             "trust_remote_code": True,
-            "use_cache": self.config.use_cache
+            "use_cache": use_cache
         }
         
-        # Add Flash Attention 2 if available
-        if self.config.use_flash_attention_2:
-            try:
-                model_kwargs["attn_implementation"] = "flash_attention_2"
-                print("✓ Flash Attention 2 enabled")
-            except Exception as e:
-                warnings.warn(f"Flash Attention 2 not available: {e}")
-                model_kwargs["attn_implementation"] = "eager"
+        # Add Flash Attention 2 if available (CUDA only)
+        if self.config.use_flash_attention_2 and torch.cuda.is_available():
+            model_kwargs["attn_implementation"] = "flash_attention_2"
+            print("Flash Attention 2 enabled")
+        elif self.config.use_flash_attention_2:
+            warnings.warn("Flash Attention 2 requires CUDA; using sdpa attention")
+            model_kwargs["attn_implementation"] = "sdpa"
         
         # Set max memory if specified
         if self.config.max_memory:
@@ -306,11 +319,12 @@ class OptimizedHFModel:
         }
         
         # Use mixed precision context if enabled
-        if self.config.mixed_precision == "bf16":
-            with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+        device_type = "cuda" if self.device.type == "cuda" else self.device.type
+        if self.config.mixed_precision == "bf16" and device_type in ("cuda", "cpu"):
+            with torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16):
                 outputs = self.model.generate(**inputs, **gen_kwargs)
-        elif self.config.mixed_precision == "fp16":
-            with torch.cuda.amp.autocast(dtype=torch.float16):
+        elif self.config.mixed_precision == "fp16" and device_type == "cuda":
+            with torch.amp.autocast(device_type=device_type, dtype=torch.float16):
                 outputs = self.model.generate(**inputs, **gen_kwargs)
         else:
             outputs = self.model.generate(**inputs, **gen_kwargs)

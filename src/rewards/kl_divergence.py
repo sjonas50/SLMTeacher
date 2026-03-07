@@ -440,5 +440,9 @@ class ApproximateKLCalculator(BaseKLCalculator):
             # Convert to KL-like score
             distance = -np.log(max(similarity, 1e-6))
             distances.append(distance)
-        
+
         return np.array(distances)
+
+
+# Compatibility alias used by reward_function.py
+KLDivergenceCalculator = BaseKLCalculator

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-Corrected Optimized RLT Training Script
+RLT Training Script
 
-Key fix: Properly trains the STUDENT model to learn from TEACHER (Claude) explanations.
+Trains a STUDENT model to learn from TEACHER (Claude) explanations
+using Group Relative Policy Optimization (GRPO).
 """
 import os
 import json
@@ -20,7 +21,7 @@ from src.teachers.claude_teacher import ClaudeRLTTeacher, ClaudeConfig, CacheCon
 from src.models.optimized_model import OptimizedHFModel, OptimizedModelConfig
 from src.rewards.reward_function import RewardFunction
 from src.rewards.student_evaluator import StudentEvaluator
-from src.training.grpo_trainer_corrected import GRPOTrainer, GRPOConfig
+from src.training.grpo_trainer import GRPOTrainer, GRPOConfig
 from src.data.data_processor import DataProcessor
 from src.utils.cost_tracker import CostTracker
 
@@ -72,7 +73,7 @@ class OptimizedRLTTrainer:
         
         # Teacher configuration
         claude_config = ClaudeConfig(
-            model=self.config['teacher'].get('model', 'claude-3-5-sonnet-20241022'),
+            model=self.config['teacher'].get('model', 'claude-sonnet-4-6-20250514'),
             temperature=self.config['teacher'].get('temperature', 0.7),
             max_tokens=self.config['teacher'].get('max_tokens', 1024)
         )
@@ -132,9 +133,15 @@ class OptimizedRLTTrainer:
         # It's used to compute rewards, not for training
         evaluation_model = self.config['evaluation'].get('model_name', 
                                                          self.config['student']['model_name'])
+        if torch.cuda.is_available():
+            eval_device = "cuda"
+        elif torch.backends.mps.is_available():
+            eval_device = "mps"
+        else:
+            eval_device = "cpu"
         self.student_evaluator = StudentEvaluator(
             model_name=evaluation_model,
-            device="cuda" if torch.cuda.is_available() else "cpu",
+            device=eval_device,
             batch_size=self.config['evaluation'].get('batch_size', 8)
         )
         
@@ -289,7 +296,7 @@ def create_default_config() -> Dict:
         "output_dir": "./optimized_rlt_output",
         "seed": 42,
         "teacher": {
-            "model": "claude-3-5-sonnet-20241022",
+            "model": "claude-sonnet-4-6-20250514",
             "temperature": 0.7,
             "max_tokens": 1024,
             "budget_limit": 50.0,

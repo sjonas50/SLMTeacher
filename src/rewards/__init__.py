@@ -31,6 +31,7 @@ Example Usage:
 # Core reward function
 from .reward_function import (
     RLTRewardFunction,
+    RewardFunction,
     AdaptiveRewardFunction,
     RewardConfig
 )
@@ -39,6 +40,7 @@ from .reward_function import (
 from .student_evaluator import (
     BaseStudentEvaluator,
     LocalStudentEvaluator,
+    StudentEvaluator,
     APIStudentEvaluator,
     EnsembleStudentEvaluator
 )
@@ -46,6 +48,7 @@ from .student_evaluator import (
 # KL divergence calculators
 from .kl_divergence import (
     BaseKLCalculator,
+    KLDivergenceCalculator,
     TransformerKLCalculator,
     SequenceKLCalculator,
     CachedKLCalculator,
@@ -75,17 +78,20 @@ except ImportError:
 __all__ = [
     # Reward functions
     "RLTRewardFunction",
+    "RewardFunction",
     "AdaptiveRewardFunction",
     "RewardConfig",
-    
+
     # Student evaluators
     "BaseStudentEvaluator",
     "LocalStudentEvaluator",
+    "StudentEvaluator",
     "APIStudentEvaluator",
     "EnsembleStudentEvaluator",
-    
+
     # KL calculators
     "BaseKLCalculator",
+    "KLDivergenceCalculator",
     "TransformerKLCalculator",
     "SequenceKLCalculator",
     "CachedKLCalculator",

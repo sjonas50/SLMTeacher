@@ -63,18 +63,19 @@ class BaseStudentEvaluator(ABC):
 class LocalStudentEvaluator(BaseStudentEvaluator):
     """
     Student evaluator using local transformer models.
-    
+
     This evaluator uses a smaller model (student) to assess how well
     it can solve problems given the teacher's reasoning.
     """
-    
+
     def __init__(
         self,
         model_name: str = "microsoft/phi-2",
-        device: str = "cuda" if torch.cuda.is_available() else "cpu",
+        device: Optional[str] = None,
         max_length: int = 512,
         temperature: float = 0.1,
-        use_fp16: bool = True
+        use_fp16: bool = True,
+        batch_size: int = 8,  # accepted for compatibility
     ):
         """
         Initialize local student evaluator.
@@ -86,18 +87,26 @@ class LocalStudentEvaluator(BaseStudentEvaluator):
             temperature: Temperature for probability computation
             use_fp16: Whether to use half precision
         """
+        if device is None:
+            if torch.cuda.is_available():
+                device = "cuda"
+            elif torch.backends.mps.is_available():
+                device = "mps"
+            else:
+                device = "cpu"
         self.device = device
         self.max_length = max_length
         self.temperature = temperature
+        self.batch_size = batch_size
         self.logger = logging.getLogger(__name__)
-        
+
         # Load model and tokenizer
         self.logger.info(f"Loading student model: {model_name}")
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        
+
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
-        
+
         # Load model with appropriate precision
         if use_fp16 and device == "cuda":
             self.model = AutoModelForCausalLM.from_pretrained(
@@ -455,3 +464,7 @@ class EnsembleStudentEvaluator(BaseStudentEvaluator):
         else:
             # Simple average in log space
             return np.logaddexp.reduce(all_log_probs, axis=0) - np.log(len(self.evaluators))
+
+
+# Compatibility alias used by training scripts
+StudentEvaluator = LocalStudentEvaluator

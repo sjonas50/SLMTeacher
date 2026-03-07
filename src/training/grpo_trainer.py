@@ -1,5 +1,7 @@
 """
-Group Relative Policy Optimization (GRPO) Trainer for RLT
+Corrected Group Relative Policy Optimization (GRPO) Trainer for RLT
+
+This version properly trains the STUDENT model to learn from TEACHER explanations.
 """
 import torch
 import torch.nn.functional as F
@@ -41,23 +43,37 @@ class GRPOConfig:
 
 
 class GRPOTrainer:
-    """Implements Group Relative Policy Optimization for RLT."""
+    """
+    Implements Group Relative Policy Optimization for RLT.
+    
+    Key difference from original: This trains the STUDENT model to learn
+    from TEACHER explanations, not the other way around.
+    """
     
     def __init__(
         self,
-        teacher_model,
-        student_evaluator,
+        teacher,  # Claude API or any explanation generator
+        student_model,  # The model we're training
+        student_evaluator,  # Evaluates student understanding for rewards
         reward_function,
         config: GRPOConfig
     ):
-        self.teacher = teacher_model
-        self.student = student_evaluator
+        self.teacher = teacher
+        self.student_model = student_model  # This is what we train!
+        self.student_evaluator = student_evaluator
         self.reward_fn = reward_function
         self.config = config
         
-        # Setup optimizer
+        # Setup optimizer for STUDENT model parameters
+        if hasattr(self.student_model, 'model'):
+            # For OptimizedHFModel wrapper
+            model_params = self.student_model.model.parameters()
+        else:
+            # For direct model
+            model_params = self.student_model.parameters()
+            
         self.optimizer = AdamW(
-            self.teacher.model.parameters(),
+            model_params,
             lr=config.learning_rate
         )
         
@@ -93,6 +109,7 @@ class GRPOTrainer:
         )
         
         print(f"Starting GRPO training for {num_epochs} epochs")
+        print(f"Training STUDENT model to learn from TEACHER explanations")
         print(f"Total steps: {total_steps}")
         
         for epoch in range(num_epochs):
@@ -115,7 +132,11 @@ class GRPOTrainer:
     
     def train_epoch(self, dataloader: DataLoader) -> Dict:
         """Train for one epoch."""
-        self.teacher.model.train()
+        # Set student model to training mode
+        if hasattr(self.student_model, 'model'):
+            self.student_model.model.train()
+        else:
+            self.student_model.train()
         
         epoch_rewards = []
         epoch_losses = []
@@ -123,11 +144,11 @@ class GRPOTrainer:
         progress_bar = tqdm(dataloader, desc=f"Epoch {self.current_epoch+1}")
         
         for batch_idx, batch in enumerate(progress_bar):
-            # Generate multiple explanations per question
+            # Generate teacher explanations and compute rewards
             batch_results = self.generate_and_score_explanations(batch)
             
-            # Compute GRPO loss
-            loss, metrics = self.compute_grpo_loss(batch_results)
+            # Train student model on these explanations
+            loss, metrics = self.train_student_on_explanations(batch_results)
             
             # Backward pass
             loss = loss / self.config.gradient_accumulation_steps
@@ -135,10 +156,18 @@ class GRPOTrainer:
             
             # Update weights
             if (batch_idx + 1) % self.config.gradient_accumulation_steps == 0:
-                torch.nn.utils.clip_grad_norm_(
-                    self.teacher.model.parameters(),
-                    self.config.max_grad_norm
-                )
+                # Clip gradients
+                if hasattr(self.student_model, 'model'):
+                    torch.nn.utils.clip_grad_norm_(
+                        self.student_model.model.parameters(),
+                        self.config.max_grad_norm
+                    )
+                else:
+                    torch.nn.utils.clip_grad_norm_(
+                        self.student_model.parameters(),
+                        self.config.max_grad_norm
+                    )
+                
                 self.optimizer.step()
                 self.scheduler.step()
                 self.optimizer.zero_grad()
@@ -166,40 +195,47 @@ class GRPOTrainer:
         }
     
     def generate_and_score_explanations(self, batch: Dict) -> Dict:
-        """Generate multiple explanations and compute rewards."""
+        """
+        Generate teacher explanations and compute rewards.
+        Teacher generates explanations, evaluator scores them.
+        """
         questions = batch['questions']
         answers = batch['answers']
         batch_size = len(questions)
         
         all_explanations = []
         all_rewards = []
-        all_logprobs = []
         
-        # Generate G explanations for each question
+        # Generate explanations from teacher (Claude API)
         for i in range(batch_size):
             question = questions[i]
             answer = answers[i]
             
             explanations_for_item = []
             rewards_for_item = []
-            logprobs_for_item = []
             
             # Generate multiple explanations with different temperatures
             for g in range(self.config.group_size):
                 temperature = 0.6 + (g * 0.1)  # Vary temperature
                 
-                # Generate explanation
-                result = self.teacher.generate_explanation(
-                    question=question,
-                    answer=answer,
-                    temperature=temperature,
-                    return_logprobs=True
-                )
+                # Teacher generates explanation
+                if hasattr(self.teacher, 'generate_explanation'):
+                    # Claude teacher
+                    explanation = self.teacher.generate_explanation(
+                        question=question,
+                        answer=answer,
+                        temperature=temperature
+                    )
+                else:
+                    # HF teacher model
+                    result = self.teacher.generate_explanation(
+                        question=question,
+                        answer=answer,
+                        temperature=temperature
+                    )
+                    explanation = result.get('explanation', result)
                 
-                explanation = result['explanation']
-                logprobs = result.get('logprobs', None)
-                
-                # Compute reward
+                # Compute reward based on how well student would understand
                 reward_result = self.reward_fn.compute_reward(
                     [explanation],
                     [question]
@@ -208,34 +244,36 @@ class GRPOTrainer:
                 
                 explanations_for_item.append(explanation)
                 rewards_for_item.append(reward)
-                logprobs_for_item.append(logprobs)
             
             all_explanations.append(explanations_for_item)
             all_rewards.append(rewards_for_item)
-            all_logprobs.append(logprobs_for_item)
         
         return {
             'explanations': all_explanations,
             'rewards': all_rewards,
-            'logprobs': all_logprobs,
             'questions': questions,
             'answers': answers
         }
     
-    def compute_grpo_loss(self, batch_results: Dict) -> Tuple[torch.Tensor, Dict]:
-        """Compute GRPO loss with group-based advantages."""
+    def train_student_on_explanations(self, batch_results: Dict) -> Tuple[torch.Tensor, Dict]:
+        """
+        Train the student model to generate good responses given teacher explanations.
+        This is where the actual learning happens!
+        """
         all_rewards = batch_results['rewards']
-        all_logprobs = batch_results['logprobs']
+        all_explanations = batch_results['explanations']
+        questions = batch_results['questions']
+        answers = batch_results['answers']
         
         total_loss = 0
         all_advantages = []
         flat_rewards = []
         
-        for item_rewards, item_logprobs in zip(all_rewards, all_logprobs):
+        for item_idx, (item_rewards, item_explanations) in enumerate(zip(all_rewards, all_explanations)):
             # Convert to tensors
             rewards = torch.tensor(item_rewards, dtype=torch.float32)
             
-            # Compute advantages within group
+            # Compute advantages within group (GRPO)
             if self.config.normalize_rewards:
                 if self.config.reward_baseline == "mean":
                     baseline = rewards.mean()
@@ -249,12 +287,30 @@ class GRPOTrainer:
             else:
                 advantages = rewards
             
-            # Compute policy loss for this group
-            for i, (logprob, advantage) in enumerate(zip(item_logprobs, advantages)):
-                if logprob is not None:
-                    # PPO-style clipped loss
-                    policy_loss = -logprob.mean() * advantage.item()
-                    total_loss += policy_loss
+            # Train student on each explanation weighted by advantage
+            question = questions[item_idx]
+            answer = answers[item_idx]
+            
+            for i, (explanation, advantage) in enumerate(zip(item_explanations, advantages)):
+                # Create training input for student:
+                # Student should learn to solve problems using teacher's explanation
+                student_input = f"Question: {question}\nExplanation: {explanation}\nAnswer:"
+                student_target = answer
+                
+                # Compute student loss (standard language modeling loss weighted by advantage)
+                if hasattr(self.student_model, 'compute_loss'):
+                    # For models with compute_loss method
+                    loss = self.student_model.compute_loss(
+                        input_text=student_input,
+                        target_text=student_target
+                    )
+                else:
+                    # For OptimizedHFModel, we need to implement this
+                    loss = self._compute_student_loss(student_input, student_target)
+                
+                # Weight loss by advantage (GRPO key insight)
+                weighted_loss = loss * advantage.item()
+                total_loss += weighted_loss
             
             all_advantages.extend(advantages.tolist())
             flat_rewards.extend(item_rewards)
@@ -271,9 +327,48 @@ class GRPOTrainer:
         
         return total_loss, metrics
     
+    def _compute_student_loss(self, input_text: str, target_text: str) -> torch.Tensor:
+        """Compute language modeling loss for student model."""
+        # Tokenize input and target
+        if hasattr(self.student_model, 'tokenizer'):
+            tokenizer = self.student_model.tokenizer
+            model = self.student_model.model
+        else:
+            raise ValueError("Student model must have tokenizer attribute")
+        
+        # Prepare input
+        full_text = input_text + " " + target_text
+        inputs = tokenizer(
+            full_text,
+            return_tensors="pt",
+            truncation=True,
+            max_length=512
+        ).to(model.device)
+        
+        # Get the position where target starts
+        input_ids = inputs.input_ids
+        input_tokens = tokenizer(input_text, return_tensors="pt").input_ids
+        target_start_pos = input_tokens.shape[1]
+        
+        # Create labels (mask out the input part)
+        labels = input_ids.clone()
+        labels[0, :target_start_pos] = -100  # Ignore input part in loss
+        
+        # Forward pass
+        outputs = model(
+            input_ids=input_ids,
+            attention_mask=inputs.attention_mask,
+            labels=labels
+        )
+        
+        return outputs.loss
+    
     def evaluate(self, eval_dataloader: DataLoader) -> Dict:
-        """Evaluate model on validation set."""
-        self.teacher.model.eval()
+        """Evaluate student model performance."""
+        if hasattr(self.student_model, 'model'):
+            self.student_model.model.eval()
+        else:
+            self.student_model.eval()
         
         all_rewards = []
         
@@ -299,12 +394,18 @@ class GRPOTrainer:
         checkpoint = {
             'epoch': self.current_epoch,
             'global_step': self.global_step,
-            'model_state_dict': self.teacher.model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
             'scheduler_state_dict': self.scheduler.state_dict(),
             'metrics': self.metrics,
             'config': self.config.__dict__
         }
+        
+        # Save student model state
+        if hasattr(self.student_model, 'save_model'):
+            model_path = os.path.join(self.config.checkpoint_dir, f'student_model_step_{self.global_step}')
+            self.student_model.save_model(model_path)
+        else:
+            checkpoint['model_state_dict'] = self.student_model.state_dict()
         
         # Save checkpoint
         checkpoint_path = os.path.join(
@@ -323,17 +424,3 @@ class GRPOTrainer:
         metrics_path = os.path.join(self.config.checkpoint_dir, 'metrics.json')
         with open(metrics_path, 'w') as f:
             json.dump(self.metrics, f, indent=2)
-    
-    def load_checkpoint(self, checkpoint_path: str):
-        """Load training checkpoint."""
-        checkpoint = torch.load(checkpoint_path)
-        
-        self.teacher.model.load_state_dict(checkpoint['model_state_dict'])
-        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-        
-        self.current_epoch = checkpoint['epoch']
-        self.global_step = checkpoint['global_step']
-        self.metrics = checkpoint['metrics']
-        
-        print(f"Loaded checkpoint from step {self.global_step}")

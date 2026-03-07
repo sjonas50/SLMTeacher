@@ -1,21 +1,24 @@
 """
 Hugging Face Teacher Model for RLT Training
 """
+import logging
+from typing import Dict, List, Optional, Tuple
+
+import numpy as np
 import torch
-from torch import nn
 from transformers import (
-    AutoModelForCausalLM, 
+    AutoModelForCausalLM,
     AutoTokenizer,
-    BitsAndBytesConfig
+    BitsAndBytesConfig,
 )
 from peft import (
-    LoraConfig, 
-    get_peft_model, 
+    LoraConfig,
+    TaskType,
+    get_peft_model,
     prepare_model_for_kbit_training,
-    TaskType
 )
-from typing import List, Dict, Optional, Tuple
-import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 class HFTeacherModel:
@@ -47,7 +50,7 @@ class HFTeacherModel:
             )
         
         # Load model and tokenizer
-        print(f"Loading teacher model: {model_name}")
+        logger.info("Loading teacher model: %s", model_name)
         self.model = AutoModelForCausalLM.from_pretrained(
             model_name,
             quantization_config=bnb_config,

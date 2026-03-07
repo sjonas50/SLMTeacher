@@ -1,28 +1,30 @@
 """
 Optimized HuggingFace Model with Flash Attention 2, QLoRA, and Advanced Memory Management
 """
+import gc
+import logging
+import warnings
+from dataclasses import dataclass
+from typing import Dict, List, Optional
+
+import numpy as np
+import psutil
 import torch
-from torch import nn
 from transformers import (
-    AutoModelForCausalLM, 
+    AutoModelForCausalLM,
     AutoTokenizer,
     BitsAndBytesConfig,
     TrainingArguments,
-    PreTrainedModel
 )
 from peft import (
-    LoraConfig, 
-    get_peft_model, 
-    prepare_model_for_kbit_training,
+    AdaLoraConfig,
+    LoraConfig,
     TaskType,
-    AdaLoraConfig
+    get_peft_model,
+    prepare_model_for_kbit_training,
 )
-from typing import List, Dict, Optional, Tuple, Union
-import numpy as np
-import psutil
-from dataclasses import dataclass
-import gc
-import warnings
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -148,31 +150,37 @@ class OptimizedHFModel:
         # Check memory before loading
         self.memory_monitor = MemoryMonitor()
         initial_stats = self.memory_monitor.get_memory_stats()
-        print("Initial memory stats:", initial_stats)
-        
+        logger.info("Initial memory stats: %s", initial_stats)
+
         # Estimate memory requirements
         estimated_memory = self.memory_monitor.estimate_model_memory(
-            config.model_name, 
+            config.model_name,
             config.use_4bit
         )
-        print(f"Estimated model memory: {estimated_memory:.2f} GB")
-        
+        logger.info("Estimated model memory: %.2f GB", estimated_memory)
+
         # Load model with optimizations
         self._load_model()
-        
+
         # Setup PEFT if requested
         if config.use_peft:
             self._setup_peft()
-        
+
         # Final memory stats
         final_stats = self.memory_monitor.get_memory_stats()
-        print("Final memory stats:", final_stats)
+        logger.info("Final memory stats: %s", final_stats)
     
     def _load_model(self):
         """Load model with all optimizations."""
         # Setup quantization config
         quantization_config = None
         if self.config.use_4bit and torch.cuda.is_available():
+            valid_dtypes = {"float16", "bfloat16", "float32"}
+            if self.config.bnb_4bit_compute_dtype not in valid_dtypes:
+                raise ValueError(
+                    f"bnb_4bit_compute_dtype must be one of {valid_dtypes}, "
+                    f"got '{self.config.bnb_4bit_compute_dtype}'"
+                )
             quantization_config = BitsAndBytesConfig(
                 load_in_4bit=True,
                 bnb_4bit_compute_dtype=getattr(torch, self.config.bnb_4bit_compute_dtype),
@@ -199,7 +207,7 @@ class OptimizedHFModel:
         # Add Flash Attention 2 if available (CUDA only)
         if self.config.use_flash_attention_2 and torch.cuda.is_available():
             model_kwargs["attn_implementation"] = "flash_attention_2"
-            print("Flash Attention 2 enabled")
+            logger.info("Flash Attention 2 enabled")
         elif self.config.use_flash_attention_2:
             warnings.warn("Flash Attention 2 requires CUDA; using sdpa attention")
             model_kwargs["attn_implementation"] = "sdpa"
@@ -209,7 +217,7 @@ class OptimizedHFModel:
             model_kwargs["max_memory"] = self.config.max_memory
         
         # Load model
-        print(f"Loading model: {self.config.model_name}")
+        logger.info("Loading model: %s", self.config.model_name)
         self.model = AutoModelForCausalLM.from_pretrained(
             self.config.model_name,
             **model_kwargs
@@ -218,7 +226,7 @@ class OptimizedHFModel:
         # Enable gradient checkpointing
         if self.config.gradient_checkpointing:
             self.model.gradient_checkpointing_enable()
-            print("✓ Gradient checkpointing enabled")
+            logger.info("Gradient checkpointing enabled")
         
         # Load tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(self.config.model_name)
@@ -251,7 +259,7 @@ class OptimizedHFModel:
                 target_modules=target_modules,
                 task_type=TaskType.CAUSAL_LM
             )
-            print(f"✓ AdaLoRA configured (init_r={self.config.adalora_init_r}, target_r={self.config.adalora_target_r})")
+            logger.info("AdaLoRA configured (init_r=%d, target_r=%d)", self.config.adalora_init_r, self.config.adalora_target_r)
         else:
             peft_config = LoraConfig(
                 r=self.config.lora_r,
@@ -261,7 +269,7 @@ class OptimizedHFModel:
                 bias="none",
                 task_type=TaskType.CAUSAL_LM
             )
-            print(f"✓ LoRA configured (r={self.config.lora_r})")
+            logger.info("LoRA configured (r=%d)", self.config.lora_r)
         
         # Apply PEFT
         self.model = get_peft_model(self.model, peft_config)
@@ -408,9 +416,9 @@ class OptimizedHFModel:
         with open(config_path, 'w') as f:
             json.dump(self.config.__dict__, f, indent=2)
         
-        print(f"✓ Model saved to {save_path}")
-    
+        logger.info("Model saved to %s", save_path)
+
     def cleanup(self):
         """Clean up resources."""
         self.memory_monitor.optimize_memory()
-        print("✓ Memory cleaned up")
+        logger.info("Memory cleaned up")

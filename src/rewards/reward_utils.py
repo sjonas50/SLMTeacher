@@ -5,16 +5,14 @@ This module provides helper functions for reward computation, normalization,
 debugging, and visualization of the reward system.
 """
 
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-from typing import List, Dict, Optional, Union, Tuple, Any
-import pandas as pd
 import json
 import logging
-from datetime import datetime
 import os
+from datetime import datetime
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, Union
+
+import numpy as np
 
 
 def normalize_rewards(
@@ -49,8 +47,10 @@ def normalize_rewards(
         return (rewards - min_val) / range_val
     
     elif method == 'softmax':
-        # Softmax normalization
-        exp_rewards = np.exp(rewards / temperature)
+        # Softmax normalization with numerical stability (log-sum-exp trick)
+        scaled = rewards / temperature
+        scaled = scaled - np.max(scaled)  # shift for stability
+        exp_rewards = np.exp(scaled)
         return exp_rewards / (np.sum(exp_rewards) + epsilon)
     
     elif method == 'robust':
@@ -236,10 +236,14 @@ class RewardLogger:
     
     def plot_reward_history(self, save_path: Optional[str] = None):
         """Plot reward history over training."""
+        import matplotlib.pyplot as plt
+
         if not self.reward_history:
             self.logger.warning("No reward history to plot")
             return
-        
+
+        import pandas as pd
+
         # Convert to DataFrame
         df = pd.DataFrame([
             {
@@ -289,6 +293,8 @@ class RewardLogger:
     
     def plot_component_analysis(self, save_path: Optional[str] = None):
         """Plot analysis of reward components."""
+        import matplotlib.pyplot as plt
+
         if not self.component_history:
             self.logger.warning("No component history to plot")
             return
@@ -357,6 +363,9 @@ class RewardDebugger:
         save_path: Optional[str] = None
     ):
         """Analyze and visualize reward distribution."""
+        import matplotlib.pyplot as plt
+        import seaborn as sns
+
         fig, axes = plt.subplots(2, 2, figsize=(12, 10))
         
         # Reward histogram
@@ -445,6 +454,7 @@ class RewardDebugger:
             np.ones(window_size) / window_size,
             mode='valid'
         )
+        import pandas as pd
         rolling_std = pd.Series(rewards_array).rolling(window_size).std().dropna().values
         
         # Check for stability

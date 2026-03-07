@@ -160,10 +160,18 @@ class TransformerKLCalculator(BaseKLCalculator):
         # Compute KL divergence: KL(P||Q) = sum(P * (log P - log Q))
         gen_probs = gen_log_probs.exp()
         kl_div = (gen_probs * (gen_log_probs - ref_log_probs)).sum(dim=-1)
-        
+
+        # Clamp to avoid negative KL from numerical errors
+        kl_div = kl_div.clamp(min=0.0)
+
         # Average over tokens
         avg_kl = kl_div.mean().item()
-        
+
+        # Guard against NaN/Inf
+        if not np.isfinite(avg_kl):
+            self.logger.warning("Non-finite KL divergence detected, returning 0.0")
+            return 0.0
+
         return avg_kl
     
     def _get_token_logits(self, text: str, context_length: int) -> torch.Tensor:
@@ -415,13 +423,14 @@ class ApproximateKLCalculator(BaseKLCalculator):
             device=self.device
         )
         
-        # Compute cosine similarity
+        # Compute cosine similarity and map to [0, 1] range
         cos_sim = F.cosine_similarity(gen_embeddings, ref_embeddings)
-        
+        # Cosine similarity can be negative; shift to [0, 1] for log safety
+        similarity = (cos_sim + 1.0) / 2.0
+
         # Convert to KL-like score (higher distance = higher KL)
-        # Use -log(similarity) to get KL-like behavior
-        kl_approx = -torch.log(cos_sim.clamp(min=1e-6))
-        
+        kl_approx = -torch.log(similarity.clamp(min=1e-6))
+
         return kl_approx.cpu().numpy()
     
     def _simple_text_distance(

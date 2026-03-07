@@ -580,18 +580,19 @@ Please provide a clear, step-by-step explanation that helps a student understand
     
     def _generate_with_metadata(self, question: str, answer: str, temperature: float) -> Dict[str, Any]:
         """Generate explanation with metadata."""
-        try:
-            explanation = self.generate_explanation(question, answer, temperature)
-            return {
-                'question': question,
-                'answer': answer,
-                'temperature': temperature,
-                'explanation': explanation,
-                'success': True,
-                'cached': explanation in [self.cache.get(question, answer, temperature)]
-            }
-        except Exception as e:
-            raise e
+        # Check cache before generating to detect cache hits
+        cached_value = self.cache.get(question, answer, temperature)
+        was_cached = cached_value is not None
+
+        explanation = self.generate_explanation(question, answer, temperature)
+        return {
+            'question': question,
+            'answer': answer,
+            'temperature': temperature,
+            'explanation': explanation,
+            'success': True,
+            'cached': was_cached,
+        }
     
     def get_stats(self) -> Dict[str, Any]:
         """Get usage statistics."""

@@ -1,19 +1,23 @@
 """
-Corrected Group Relative Policy Optimization (GRPO) Trainer for RLT
+Group Relative Policy Optimization (GRPO) Trainer for RLT
 
-This version properly trains the STUDENT model to learn from TEACHER explanations.
+Trains the STUDENT model to learn from TEACHER explanations.
 """
+import json
+import logging
+import os
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Tuple
+
+import numpy as np
 import torch
 import torch.nn.functional as F
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
-from transformers import get_linear_schedule_with_warmup
-from typing import Dict, List, Optional, Tuple
-import numpy as np
 from tqdm import tqdm
-import os
-import json
-from dataclasses import dataclass
+from transformers import get_linear_schedule_with_warmup
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -108,22 +112,22 @@ class GRPOTrainer:
             num_training_steps=total_steps
         )
         
-        print(f"Starting GRPO training for {num_epochs} epochs")
-        print(f"Training STUDENT model to learn from TEACHER explanations")
-        print(f"Total steps: {total_steps}")
+        logger.info("Starting GRPO training for %d epochs", num_epochs)
+        logger.info("Training STUDENT model to learn from TEACHER explanations")
+        logger.info("Total steps: %d", total_steps)
         
         for epoch in range(num_epochs):
             self.current_epoch = epoch
             epoch_metrics = self.train_epoch(train_dataloader)
             
-            print(f"\nEpoch {epoch+1}/{num_epochs} completed")
-            print(f"Average reward: {epoch_metrics['avg_reward']:.4f}")
-            print(f"Average loss: {epoch_metrics['avg_loss']:.4f}")
+            logger.info("Epoch %d/%d completed", epoch + 1, num_epochs)
+            logger.info("Average reward: %.4f", epoch_metrics['avg_reward'])
+            logger.info("Average loss: %.4f", epoch_metrics['avg_loss'])
             
             # Evaluation
             if eval_dataloader and (epoch + 1) % self.config.eval_steps == 0:
                 eval_metrics = self.evaluate(eval_dataloader)
-                print(f"Evaluation reward: {eval_metrics['avg_reward']:.4f}")
+                logger.info("Evaluation reward: %.4f", eval_metrics['avg_reward'])
                 
                 # Save best model
                 if eval_metrics['avg_reward'] > self.best_reward:
@@ -418,7 +422,7 @@ class GRPOTrainer:
         if is_best:
             best_path = os.path.join(self.config.checkpoint_dir, 'best_model.pt')
             torch.save(checkpoint, best_path)
-            print(f"Saved best model with reward: {self.best_reward:.4f}")
+            logger.info("Saved best model with reward: %.4f", self.best_reward)
         
         # Save metrics
         metrics_path = os.path.join(self.config.checkpoint_dir, 'metrics.json')

@@ -56,30 +56,25 @@ pip install -r requirements.txt
 export CLAUDE_API_KEY="your-api-key-here"
 ```
 
-### Option 1: Optimized Training (Recommended)
+### Training
 ```bash
-# Create configuration
-python train_optimized_rlt_corrected.py --create-config
+# Create default configuration
+python train.py --create-config
 
-# Run training with all optimizations
-python train_optimized_rlt_corrected.py
+# Run training with local evaluation (cheapest)
+python train.py
 
-# Or with custom student model
-python train_optimized_rlt_corrected.py --student-model "mistralai/Mistral-7B-Instruct-v0.3"
+# With custom student model
+python train.py --student-model "mistralai/Mistral-7B-Instruct-v0.3"
 
-# For highest quality (Claude as evaluator too):
-python train_optimized_rlt_claude_eval.py --eval-mode hybrid
-```
+# Hybrid evaluation (Claude 20% + local 80%)
+python train.py --eval-mode hybrid
 
-### Option 2: Standard Training
-```bash
-# Train with default settings
-python train_rlt_model.py \
-    --teacher-model meta-llama/Llama-3.2-3B-Instruct \
-    --datasets gsm8k \
-    --max-samples 1000 \
-    --num-epochs 3 \
-    --use-lora
+# Full Claude evaluation (highest quality, most expensive)
+python train.py --eval-mode claude --budget-limit 100.0
+
+# With experiment tracking
+python train.py --tracker wandb --tracker-project my-rlt-experiment
 ```
 
 ### Option 3: Interactive Notebooks

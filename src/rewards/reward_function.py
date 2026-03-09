@@ -105,14 +105,17 @@ class RLTRewardFunction:
             problems=problem
         )
         
-        # Compute KL divergence scores (rKL)
-        self.logger.debug("Computing KL divergence scores...")
-        kl_scores = self.kl_calculator.compute_batch(
-            generated_reasoning=reasoning,
-            reference_reasoning=reference_reasoning or reasoning,
-            problems=problem
-        )
-        
+        # Compute KL divergence scores (rKL) — skip when no reference
+        if reference_reasoning is not None:
+            self.logger.debug("Computing KL divergence scores...")
+            kl_scores = self.kl_calculator.compute_batch(
+                generated_reasoning=reasoning,
+                reference_reasoning=reference_reasoning,
+                problems=problem
+            )
+        else:
+            kl_scores = np.zeros(batch_size)
+
         # Combine rewards: r = rSS - λ * rKL
         raw_rewards = solution_scores - self.config.lambda_kl * kl_scores
         
@@ -221,9 +224,15 @@ class RewardFunction:
         self,
         explanations: List[str],
         questions: List[str],
+        answers: Optional[List[str]] = None,
     ) -> Dict[str, List[float]]:
         """
         Compute rewards for a batch of explanations.
+
+        Args:
+            explanations: Teacher-generated explanations.
+            questions: Problem statements.
+            answers: Reference answers for correctness evaluation.
 
         Returns:
             Dict with 'rewards' key containing list of float scores.
@@ -233,6 +242,7 @@ class RewardFunction:
                 scores = self.student_evaluator.evaluate_batch(
                     reasoning=explanations,
                     problems=questions,
+                    reference_answers=answers,
                 )
                 length_penalties = np.array([
                     -self.length_penalty_weight * max(0, len(e) / 1000 - 1)

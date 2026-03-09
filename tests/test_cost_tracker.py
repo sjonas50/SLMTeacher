@@ -106,6 +106,6 @@ class TestCostTracker:
         assert tracker.get_summary()['total_cost'] == pytest.approx(expected, abs=0.01)
 
     def test_model_pricing_table_has_expected_models(self):
-        assert 'claude-sonnet-4-6-20250514' in MODEL_PRICING
+        assert 'claude-sonnet-4-6' in MODEL_PRICING
         assert 'claude-3-opus-20240229' in MODEL_PRICING
         assert 'claude-3-haiku-20240307' in MODEL_PRICING

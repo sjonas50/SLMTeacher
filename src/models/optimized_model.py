@@ -10,6 +10,7 @@ from typing import Dict, List, Optional
 import numpy as np
 import psutil
 import torch
+import torch.nn.functional as F
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
@@ -146,7 +147,16 @@ class OptimizedHFModel:
             self.device = torch.device("mps")
         else:
             self.device = torch.device("cpu")
-        
+
+        # Auto-disable CUDA-only features on non-CUDA devices
+        if not torch.cuda.is_available():
+            if config.use_4bit or config.use_8bit:
+                logger.info("Quantization requires CUDA — disabling (using fp32)")
+                config.use_4bit = False
+                config.use_8bit = False
+            if config.device_map == "auto":
+                config.device_map = None  # explicit placement instead
+
         # Check memory before loading
         self.memory_monitor = MemoryMonitor()
         initial_stats = self.memory_monitor.get_memory_stats()
@@ -198,11 +208,13 @@ class OptimizedHFModel:
 
         # Model loading kwargs
         model_kwargs = {
-            "quantization_config": quantization_config,
-            "device_map": self.config.device_map,
             "trust_remote_code": True,
-            "use_cache": use_cache
+            "use_cache": use_cache,
         }
+        if quantization_config is not None:
+            model_kwargs["quantization_config"] = quantization_config
+        if self.config.device_map is not None:
+            model_kwargs["device_map"] = self.config.device_map
         
         # Add Flash Attention 2 if available (CUDA only)
         if self.config.use_flash_attention_2 and torch.cuda.is_available():
@@ -222,7 +234,12 @@ class OptimizedHFModel:
             self.config.model_name,
             **model_kwargs
         )
-        
+
+        # Move to device when not using device_map (MPS / CPU)
+        if self.config.device_map is None:
+            logger.info("Moving model to %s", self.device)
+            self.model.to(self.device)
+
         # Enable gradient checkpointing
         if self.config.gradient_checkpointing:
             self.model.gradient_checkpointing_enable()
@@ -248,19 +265,26 @@ class OptimizedHFModel:
         
         # Create PEFT config
         if self.config.peft_method == "adalora":
-            peft_config = AdaLoraConfig(
-                init_r=self.config.adalora_init_r,
-                target_r=self.config.adalora_target_r,
-                tinit=self.config.adalora_tinit,
-                tfinal=self.config.adalora_tfinal,
-                deltaT=self.config.adalora_delta_t,
-                lora_alpha=self.config.lora_alpha,
-                lora_dropout=self.config.lora_dropout,
-                target_modules=target_modules,
-                task_type=TaskType.CAUSAL_LM
-            )
-            logger.info("AdaLoRA configured (init_r=%d, target_r=%d)", self.config.adalora_init_r, self.config.adalora_target_r)
-        else:
+            try:
+                peft_config = AdaLoraConfig(
+                    init_r=self.config.adalora_init_r,
+                    target_r=self.config.adalora_target_r,
+                    tinit=self.config.adalora_tinit,
+                    tfinal=self.config.adalora_tfinal,
+                    deltaT=self.config.adalora_delta_t,
+                    lora_alpha=self.config.lora_alpha,
+                    lora_dropout=self.config.lora_dropout,
+                    target_modules=target_modules,
+                    task_type=TaskType.CAUSAL_LM,
+                    total_step=self.config.adalora_tfinal,
+                )
+                logger.info("AdaLoRA configured (init_r=%d, target_r=%d)",
+                            self.config.adalora_init_r, self.config.adalora_target_r)
+            except (TypeError, ValueError) as e:
+                logger.warning("AdaLoRA init failed (%s), falling back to LoRA", e)
+                self.config.peft_method = "lora"
+
+        if self.config.peft_method != "adalora":
             peft_config = LoraConfig(
                 r=self.config.lora_r,
                 lora_alpha=self.config.lora_alpha,
@@ -348,7 +372,84 @@ class OptimizedHFModel:
             "input_length": inputs.input_ids.shape[1],
             "output_length": outputs.shape[1]
         }
-    
+
+    def _get_prefix_len(self, input_text: str, full_text: str) -> int:
+        """Compute prefix token length using consistent tokenization.
+
+        Tokenizes ``input_text`` with the same settings as the full sequence
+        so that BPE merges are identical up to the boundary.
+        """
+        prefix_ids = self.tokenizer(
+            input_text, return_tensors="pt", truncation=True,
+            max_length=self.tokenizer.model_max_length,
+            add_special_tokens=True,
+        ).input_ids
+        return prefix_ids.shape[1]
+
+    def compute_loss(self, input_text: str, target_text: str) -> torch.Tensor:
+        """Compute cross-entropy loss for target_text given input_text as prefix.
+
+        Tokenizes the concatenation of input_text and target_text, masks the
+        prefix tokens with -100 so that only the target portion contributes to
+        the loss, then runs a forward pass and returns ``outputs.loss``.
+        """
+        full_text = input_text + target_text
+        encoding = self.tokenizer(
+            full_text,
+            return_tensors="pt",
+            truncation=True,
+            max_length=self.tokenizer.model_max_length,
+            add_special_tokens=True,
+        ).to(self.device)
+
+        input_ids = encoding.input_ids
+        labels = input_ids.clone()
+        prefix_len = min(self._get_prefix_len(input_text, full_text), labels.shape[1])
+        labels[:, :prefix_len] = -100
+
+        outputs = self.model(input_ids=input_ids, labels=labels)
+        return outputs.loss
+
+    def compute_log_probs(self, input_text: str, target_text: str) -> torch.Tensor:
+        """Compute sum of log probabilities of target tokens given input prefix.
+
+        Returns a scalar tensor with gradients enabled, suitable for use in
+        policy-gradient objectives (e.g. GRPO / PPO).  Returns the **sum**
+        (not mean) so that PPO ratios are not biased by answer length.
+        """
+        full_text = input_text + target_text
+        encoding = self.tokenizer(
+            full_text,
+            return_tensors="pt",
+            truncation=True,
+            max_length=self.tokenizer.model_max_length,
+            add_special_tokens=True,
+        ).to(self.device)
+
+        input_ids = encoding.input_ids  # (1, seq_len)
+        outputs = self.model(input_ids=input_ids)
+        logits = outputs.logits  # (1, seq_len, vocab_size)
+
+        # Shift: predict token t+1 from position t
+        shift_logits = logits[:, :-1, :]  # (1, seq_len-1, vocab)
+        shift_labels = input_ids[:, 1:]   # (1, seq_len-1)
+
+        log_probs = F.log_softmax(shift_logits, dim=-1)
+        token_log_probs = log_probs.gather(
+            dim=-1, index=shift_labels.unsqueeze(-1)
+        ).squeeze(-1)  # (1, seq_len-1)
+
+        # Target tokens: in the shifted sequence, the first target token to
+        # predict is at position (prefix_len - 1) because shift moves left by 1
+        prefix_len = self._get_prefix_len(input_text, full_text)
+        target_start = max(0, min(prefix_len - 1, token_log_probs.shape[1]))
+        target_log_probs = token_log_probs[:, target_start:]
+
+        if target_log_probs.numel() == 0:
+            return torch.tensor(-100.0, device=self.device, requires_grad=True)
+
+        return target_log_probs.sum()
+
     def prepare_training_args(self) -> TrainingArguments:
         """Create optimized training arguments."""
         return TrainingArguments(

@@ -31,6 +31,36 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Subject-specific system prompts and difficulty instructions
+# ---------------------------------------------------------------------------
+SUBJECT_PROMPTS: Dict[str, str] = {
+    "math": (
+        "You are a mathematics tutor. Show every algebraic step explicitly, "
+        "verify intermediate computations, and check the final answer by "
+        "substitution or estimation where possible."
+    ),
+    "science": (
+        "You are a science tutor. State the relevant physical laws or concepts, "
+        "include units throughout the calculation, and explain the reasoning "
+        "behind each step."
+    ),
+    "default": (
+        "You are a clear and patient tutor. Break the solution into logical "
+        "steps, explain the reasoning at each stage, and verify the final answer."
+    ),
+}
+
+DIFFICULTY_INSTRUCTIONS: Dict[str, str] = {
+    "easy": "Use simple language and concrete examples. Keep the explanation short.",
+    "medium": "Balance detail and clarity. Include key reasoning steps.",
+    "hard": (
+        "Show advanced reasoning. Address common misconceptions and explain "
+        "why alternative approaches would fail."
+    ),
+}
+
+
 class FallbackStrategy(Enum):
     """Fallback strategies when Claude API is unavailable."""
     TEMPLATE = "template"  # Use template-based explanations
@@ -60,7 +90,7 @@ class CacheConfig:
 @dataclass
 class ClaudeConfig:
     """Configuration for Claude API and teacher behavior."""
-    model: str = "claude-sonnet-4-6-20250514"
+    model: str = "claude-sonnet-4-6"
     temperature: float = 0.7
     max_tokens: int = 1024
     api_timeout: int = 30
@@ -348,7 +378,7 @@ Remember: Your goal is maximum student understanding, not just providing the ans
             logger.info(f"Rate limit reached. Waiting {wait_time:.1f} seconds...")
             time.sleep(wait_time)
     
-    def _call_claude_api(self, prompt: str, temperature: float) -> Tuple[str, int, int]:
+    def _call_claude_api(self, prompt: str, temperature: float, max_tokens: Optional[int] = None) -> Tuple[str, int, int]:
         """
         Make API call to Claude with retry logic.
         
@@ -367,7 +397,7 @@ Remember: Your goal is maximum student understanding, not just providing the ans
                         messages=[{"role": "user", "content": prompt}],
                         system=self.system_prompt,
                         temperature=temperature,
-                        max_tokens=self.claude_config.max_tokens,
+                        max_tokens=max_tokens or self.claude_config.max_tokens,
                         timeout=self.claude_config.api_timeout
                     )
                     
@@ -427,20 +457,24 @@ The answer is {answer}."""
         question: str,
         answer: str,
         temperature: Optional[float] = None,
-        use_cache: bool = True
+        use_cache: bool = True,
+        subject: str = "default",
+        difficulty: str = "medium",
     ) -> str:
         """
         Generate an explanation for a question-answer pair.
-        
+
         Args:
             question: The question to explain.
             answer: The correct answer.
             temperature: Sampling temperature (0.0-1.0). If None, uses config default.
             use_cache: Whether to use caching.
-        
+            subject: Subject area for specialized prompts (math, science, default).
+            difficulty: Difficulty level (easy, medium, hard).
+
         Returns:
             Generated explanation string.
-        
+
         Raises:
             APIError: If API call fails after all retries.
             ValueError: If inputs are invalid.
@@ -448,13 +482,13 @@ The answer is {answer}."""
         # Validate inputs
         if not question or not answer:
             raise ValueError("Question and answer must be non-empty strings")
-        
+
         temperature = temperature if temperature is not None else self.claude_config.temperature
         if not 0.0 <= temperature <= 1.0:
             raise ValueError(f"Temperature must be between 0.0 and 1.0, got {temperature}")
-        
+
         self.stats['total_requests'] += 1
-        
+
         # Check cache
         if use_cache:
             cached = self.cache.get(question, answer, temperature)
@@ -462,12 +496,23 @@ The answer is {answer}."""
                 self.stats['cache_hits'] += 1
                 logger.debug(f"Returning cached explanation for: {question[:50]}...")
                 return cached
-        
-        # Prepare prompt
-        prompt = f"""Question: {question}
+
+        # Build structured prompt with subject + difficulty awareness
+        system_prompt = SUBJECT_PROMPTS.get(subject, SUBJECT_PROMPTS["default"])
+        diff_instruction = DIFFICULTY_INSTRUCTIONS.get(difficulty, DIFFICULTY_INSTRUCTIONS["medium"])
+
+        prompt = f"""{system_prompt}
+{diff_instruction}
+
+Question: {question}
 Correct Answer: {answer}
 
-Please provide a clear, step-by-step explanation that helps a student understand how to arrive at this answer. Focus on the reasoning process and make each step easy to follow."""
+Explain step by step:
+1. Understanding: What is the question asking?
+2. Approach: What method or concept applies?
+3. Steps: Show each calculation or reasoning step.
+4. Answer: State the final answer clearly.
+5. Check: Verify the answer is correct."""
         
         try:
             # Call API
@@ -631,7 +676,7 @@ def create_teacher_from_env() -> ClaudeRLTTeacher:
     
     Environment variables:
         - CLAUDE_API_KEY: API key (required)
-        - CLAUDE_MODEL: Model to use (default: claude-sonnet-4-6-20250514)
+        - CLAUDE_MODEL: Model to use (default: claude-sonnet-4-6)
         - CLAUDE_BUDGET_LIMIT: Budget limit in USD (default: 10.0)
         - CLAUDE_CACHE_ENABLED: Enable caching (default: true)
     
@@ -640,7 +685,7 @@ def create_teacher_from_env() -> ClaudeRLTTeacher:
     """
     # Read environment variables
     api_key = os.getenv("CLAUDE_API_KEY")
-    model = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6-20250514")
+    model = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
     budget_limit = float(os.getenv("CLAUDE_BUDGET_LIMIT", "10.0"))
     cache_enabled = os.getenv("CLAUDE_CACHE_ENABLED", "true").lower() == "true"
     

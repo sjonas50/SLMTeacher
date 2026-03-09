@@ -22,7 +22,7 @@ from src.utils.cost_tracker import CostTracker
 @dataclass
 class RLTConfig:
     """Configuration matching the notebook's RLTConfig."""
-    teacher_model_name: str = "claude-sonnet-4-6-20250514"
+    teacher_model_name: str = "claude-sonnet-4-6"
     student_model_name: str = "microsoft/DialoGPT-small"
     max_length: int = 512
     batch_size: int = 2

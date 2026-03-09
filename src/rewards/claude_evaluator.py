@@ -22,7 +22,7 @@ from ..utils.cost_tracker import CostTracker
 @dataclass
 class ClaudeEvaluatorConfig:
     """Configuration for Claude evaluator."""
-    model: str = "claude-sonnet-4-6-20250514"
+    model: str = "claude-sonnet-4-6"
     temperature: float = 0.1  # Low temperature for consistent evaluation
     max_tokens: int = 512
     max_workers: int = 5

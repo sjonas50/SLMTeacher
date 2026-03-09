@@ -22,20 +22,23 @@ import re
 
 class BaseStudentEvaluator(ABC):
     """Abstract base class for student evaluators."""
-    
+
     @abstractmethod
     def evaluate_batch(
         self,
         reasoning: List[str],
-        problems: List[str]
+        problems: List[str],
+        reference_answers: Optional[List[str]] = None,
     ) -> np.ndarray:
         """
         Evaluate student understanding given reasoning and problems.
-        
+
         Args:
             reasoning: List of teacher reasoning texts
             problems: List of problem statements
-            
+            reference_answers: If provided, measure correctness against these
+                answers instead of using confidence-based scoring.
+
         Returns:
             Array of solution scores
         """
@@ -123,32 +126,34 @@ class LocalStudentEvaluator(BaseStudentEvaluator):
     def evaluate_batch(
         self,
         reasoning: List[str],
-        problems: List[str]
+        problems: List[str],
+        reference_answers: Optional[List[str]] = None,
     ) -> np.ndarray:
         """
-        Evaluate student understanding using log probability of correct solutions.
-        
-        The solution score measures how likely the student is to produce
-        the correct answer given the teacher's reasoning.
+        Evaluate student understanding.
+
+        When ``reference_answers`` is provided the student generates a greedy
+        answer and correctness is checked against the reference (0.0 / 0.5 / 1.0).
+        Otherwise falls back to confidence-based scoring (average log-prob of
+        generated tokens).
         """
+        if reference_answers is not None:
+            return self._evaluate_correctness_batch(reasoning, problems, reference_answers)
+
         batch_size = len(reasoning)
         scores = []
-        
+
         for i in range(batch_size):
-            # Format input: problem + reasoning
             input_text = f"Problem: {problems[i]}\n\nReasoning: {reasoning[i]}\n\nSolution:"
-            
-            # Generate solution and compute confidence
+
             with torch.no_grad():
-                # Tokenize input
                 inputs = self.tokenizer(
                     input_text,
                     return_tensors="pt",
                     max_length=self.max_length,
                     truncation=True
                 ).to(self.device)
-                
-                # Generate solution
+
                 outputs = self.model.generate(
                     **inputs,
                     max_new_tokens=100,
@@ -157,24 +162,105 @@ class LocalStudentEvaluator(BaseStudentEvaluator):
                     output_scores=True,
                     return_dict_in_generate=True
                 )
-                
-                # Compute average log probability of generated tokens
+
                 if outputs.scores:
                     log_probs = []
                     for j, score in enumerate(outputs.scores):
-                        # Get the generated token at this position
                         token_id = outputs.sequences[0, inputs.input_ids.shape[1] + j]
-                        # Get log probability of this token
                         log_prob = F.log_softmax(score[0] / self.temperature, dim=-1)
                         log_probs.append(log_prob[token_id].item())
-                    
-                    # Average log probability as confidence score
                     avg_log_prob = np.mean(log_probs) if log_probs else -10.0
                     scores.append(avg_log_prob)
                 else:
-                    scores.append(-10.0)  # Default low score
-        
+                    scores.append(-10.0)
+
         return np.array(scores)
+
+    def _evaluate_correctness_batch(
+        self,
+        reasoning: List[str],
+        problems: List[str],
+        reference_answers: List[str],
+    ) -> np.ndarray:
+        """Generate answers greedily and score against reference answers."""
+        scores = []
+
+        for i in range(len(reasoning)):
+            input_text = f"Problem: {problems[i]}\n\nReasoning: {reasoning[i]}\n\nSolution:"
+
+            with torch.no_grad():
+                inputs = self.tokenizer(
+                    input_text,
+                    return_tensors="pt",
+                    max_length=self.max_length,
+                    truncation=True,
+                ).to(self.device)
+
+                outputs = self.model.generate(
+                    **inputs,
+                    max_new_tokens=50,
+                    do_sample=False,
+                )
+                generated = self.tokenizer.decode(
+                    outputs[0, inputs.input_ids.shape[1]:],
+                    skip_special_tokens=True,
+                )
+
+            score = self._compare_answers(generated, reference_answers[i])
+            scores.append(score)
+
+        return np.array(scores)
+
+    @staticmethod
+    def _compare_answers(generated: str, reference: str) -> float:
+        """Compare a generated answer to a reference answer.
+
+        Returns a continuous score in [0, 1] to provide a dense reward signal:
+            1.0  — exact or numerical match
+            0.9  — within 1% relative error
+            0.7  — within 5% relative error
+            0.5  — within 10% relative error
+            0.3  — within 25% relative error
+            0–0.5 — token overlap for non-numeric answers
+            0.0  — no match
+        """
+        gen_clean = generated.strip().lower()
+        ref_clean = reference.strip().lower()
+
+        if gen_clean == ref_clean:
+            return 1.0
+
+        # Numerical comparison (for math / quantitative answers)
+        gen_nums = re.findall(r'-?\d+\.?\d*', gen_clean)
+        ref_nums = re.findall(r'-?\d+\.?\d*', ref_clean)
+
+        if gen_nums and ref_nums:
+            try:
+                gen_val = float(gen_nums[-1])
+                ref_val = float(ref_nums[-1])
+                if gen_val == ref_val:
+                    return 1.0
+                if ref_val != 0:
+                    relative_error = abs(gen_val - ref_val) / abs(ref_val)
+                    if relative_error <= 0.01:
+                        return 0.9
+                    elif relative_error <= 0.05:
+                        return 0.7
+                    elif relative_error <= 0.10:
+                        return 0.5
+                    elif relative_error <= 0.25:
+                        return 0.3
+            except ValueError:
+                pass
+
+        # Token overlap for non-numeric answers
+        gen_tokens = set(gen_clean.split())
+        ref_tokens = set(ref_clean.split())
+        if ref_tokens:
+            overlap = len(gen_tokens & ref_tokens) / len(ref_tokens)
+            return min(overlap * 0.5, 0.5)  # Cap at 0.5 for partial token match
+
+        return 0.0
     
     def get_log_probabilities(
         self,
@@ -339,7 +425,8 @@ class APIStudentEvaluator(BaseStudentEvaluator):
     def evaluate_batch(
         self,
         reasoning: List[str],
-        problems: List[str]
+        problems: List[str],
+        reference_answers: Optional[List[str]] = None,
     ) -> np.ndarray:
         """Evaluate student understanding using API calls."""
         # Run async evaluation
@@ -349,7 +436,7 @@ class APIStudentEvaluator(BaseStudentEvaluator):
             self._evaluate_batch_async(reasoning, problems)
         )
         loop.close()
-        
+
         return np.array(scores)
     
     def get_log_probabilities(
@@ -421,13 +508,14 @@ class EnsembleStudentEvaluator(BaseStudentEvaluator):
     def evaluate_batch(
         self,
         reasoning: List[str],
-        problems: List[str]
+        problems: List[str],
+        reference_answers: Optional[List[str]] = None,
     ) -> np.ndarray:
         """Evaluate using ensemble of models."""
         all_scores = []
-        
+
         for evaluator in self.evaluators:
-            scores = evaluator.evaluate_batch(reasoning, problems)
+            scores = evaluator.evaluate_batch(reasoning, problems, reference_answers)
             all_scores.append(scores)
         
         all_scores = np.array(all_scores)  # Shape: (n_evaluators, batch_size)
@@ -464,6 +552,81 @@ class EnsembleStudentEvaluator(BaseStudentEvaluator):
         else:
             # Simple average in log space
             return np.logaddexp.reduce(all_log_probs, axis=0) - np.log(len(self.evaluators))
+
+
+class SharedModelEvaluator(BaseStudentEvaluator):
+    """Evaluator that reuses the student's OptimizedHFModel.
+
+    Avoids loading a second model into memory — critical on
+    memory-constrained devices (e.g. 16 GB Apple Silicon).
+    """
+
+    def __init__(self, optimized_model):
+        self.model_wrapper = optimized_model
+        self.model = optimized_model.model
+        self.tokenizer = optimized_model.tokenizer
+        self.device = optimized_model.device
+        self.logger = logging.getLogger(__name__)
+
+    def evaluate_batch(
+        self,
+        reasoning: List[str],
+        problems: List[str],
+        reference_answers: Optional[List[str]] = None,
+    ) -> np.ndarray:
+        if reference_answers is not None:
+            return self._evaluate_correctness(reasoning, problems, reference_answers)
+        # Confidence-based fallback
+        scores = []
+        for r, p in zip(reasoning, problems):
+            prompt = f"Problem: {p}\n\nReasoning: {r}\n\nSolution:"
+            with torch.no_grad():
+                inputs = self.tokenizer(
+                    prompt, return_tensors="pt", truncation=True,
+                    max_length=self.tokenizer.model_max_length,
+                ).to(self.device)
+                outputs = self.model.generate(
+                    **inputs, max_new_tokens=50, do_sample=False,
+                )
+                gen_ids = outputs[0, inputs.input_ids.shape[1]:]
+                if gen_ids.numel() == 0:
+                    scores.append(-10.0)
+                    continue
+                logits = self.model(outputs).logits
+                shift_logits = logits[:, inputs.input_ids.shape[1] - 1:-1, :]
+                log_probs = F.log_softmax(shift_logits, dim=-1)
+                token_lps = log_probs.gather(
+                    dim=-1, index=gen_ids.unsqueeze(0).unsqueeze(-1)
+                ).squeeze(-1)
+                scores.append(token_lps.mean().item())
+        return np.array(scores)
+
+    def _evaluate_correctness(self, reasoning, problems, reference_answers):
+        scores = []
+        for r, p, ref in zip(reasoning, problems, reference_answers):
+            prompt = f"Problem: {p}\n\nReasoning: {r}\n\nSolution:"
+            with torch.no_grad():
+                inputs = self.tokenizer(
+                    prompt, return_tensors="pt", truncation=True,
+                    max_length=self.tokenizer.model_max_length,
+                ).to(self.device)
+                outputs = self.model.generate(
+                    **inputs, max_new_tokens=50, do_sample=False,
+                )
+                generated = self.tokenizer.decode(
+                    outputs[0, inputs.input_ids.shape[1]:],
+                    skip_special_tokens=True,
+                )
+            score = LocalStudentEvaluator._compare_answers(generated, ref)
+            scores.append(score)
+        return np.array(scores)
+
+    def get_log_probabilities(self, inputs: List[str], targets: List[str]) -> np.ndarray:
+        log_probs = []
+        for inp, tgt in zip(inputs, targets):
+            lp = self.model_wrapper.compute_log_probs(inp, tgt)
+            log_probs.append(lp.detach().item())
+        return np.array(log_probs)
 
 
 # Compatibility alias used by training scripts

@@ -10,8 +10,14 @@ class TestGRPOConfig:
         assert config.batch_size == 4
         assert config.gradient_accumulation_steps == 4
         assert config.num_epochs == 3
-        assert config.group_size == 4
+        assert config.group_size == 6
+        assert config.lr_scheduler_type == "cosine"
+        assert config.warmup_ratio == 0.1
+        assert config.warmup_steps == 0
         assert config.clip_epsilon == 0.2
+        assert config.kl_coef == 0.1
+        assert config.entropy_coef == 0.01
+        assert config.ref_update_freq == 1
         assert config.normalize_rewards is True
         assert config.tracker is None
         assert config.tracker_project == "slmteacher"

@@ -188,74 +188,64 @@ class DataLoader:
         
         return dataset_path
     
-    def _load_gsm8k(self, 
+    def _load_gsm8k(self,
                    split: str = 'train',
                    subset: Optional[str] = None,
                    max_samples: Optional[int] = None) -> List[RLTDataPoint]:
         """Load GSM8K dataset."""
-        dataset_path = self._ensure_dataset_downloaded('gsm8k')
-        
-        # Determine file to load
-        if split == 'train':
-            file_path = dataset_path / 'train.jsonl'
-        elif split == 'test':
-            file_path = dataset_path / 'test.jsonl'
-        else:
+        if split not in ('train', 'test'):
             raise ValueError(f"Invalid split for GSM8K: {split}")
-        
-        # Try HuggingFace datasets first
+
+        # Try HuggingFace datasets library first (preferred)
         try:
             from datasets import load_dataset
-            dataset = load_dataset('gsm8k', 'main', split=split)
-            
+            dataset = load_dataset('openai/gsm8k', 'main', split=split)
+
             data_points = []
             for idx, item in enumerate(dataset):
                 if max_samples and idx >= max_samples:
                     break
-                
-                # Extract answer from the format "#### answer"
+
                 answer = item['answer'].split('####')[-1].strip()
-                
                 data_point = RLTDataPoint(
                     question=item['question'],
                     solution=answer,
                     subject='math',
                     difficulty=self._estimate_difficulty(item['question'])
                 )
-                
                 data_points.append(data_point)
-            
+
             return data_points
-            
+
         except ImportError:
-            logger.info("Datasets library not available, loading from file")
-        
-        # Fallback to manual loading
+            logger.info("datasets library not available, falling back to file download")
+        except Exception as e:
+            logger.warning("HF datasets load failed (%s), falling back to file download", e)
+
+        # Fallback: download JSONL files directly
+        dataset_path = self._ensure_dataset_downloaded('gsm8k')
+        file_path = dataset_path / f'{split}.jsonl'
+
         if not file_path.exists():
             logger.warning(f"GSM8K file not found: {file_path}")
             return []
-        
+
         data_points = []
-        
         with open(file_path, 'r') as f:
             for idx, line in enumerate(f):
                 if max_samples and idx >= max_samples:
                     break
-                
+
                 item = json.loads(line)
-                
-                # Extract answer from the format "#### answer"
                 answer = item['answer'].split('####')[-1].strip()
-                
                 data_point = RLTDataPoint(
                     question=item['question'],
                     solution=answer,
                     subject='math',
                     difficulty=self._estimate_difficulty(item['question'])
                 )
-                
                 data_points.append(data_point)
-        
+
         return data_points
     
     def _load_math(self,

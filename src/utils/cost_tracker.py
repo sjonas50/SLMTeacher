@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 # Per-model pricing (USD per million tokens) — update when pricing changes
 MODEL_PRICING = {
     # Claude 4.x / Sonnet 4
-    "claude-sonnet-4-6-20250514": {"input": 3.0, "output": 15.0},
+    "claude-sonnet-4-6": {"input": 3.0, "output": 15.0},
     "claude-sonnet-4-5-20250514": {"input": 3.0, "output": 15.0},
     # Claude 3.5
     "claude-3-5-sonnet-20241022": {"input": 3.0, "output": 15.0},
